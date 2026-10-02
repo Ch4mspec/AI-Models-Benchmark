@@ -1,8 +1,8 @@
-# Chemspec method
+# Methodology
 
 **How to benchmark a local LLM without lying to yourself**
 
-This document is the method behind [`ai-models-benchmark`](https://github.com/).
+This document is the method behind [`AI-Models-Benchmark`](https://github.com/Ch4mspec/AI-Models-Benchmark).
 It exists because most published LLM comparisons are wrong in ways that
 favour whoever ran them. The purpose here is to make the results impossible
 to argue with, including by you.

@@ -1,4 +1,4 @@
-# Chemspec
+# AI-Models-Benchmark
 
 **Benchmark harness for local LLMs. Measures what the model actually
 produced, not what it claims.**

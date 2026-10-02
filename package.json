@@ -2,7 +2,7 @@
   "name": "ai-models-benchmark",
   "version": "1.0.0",
   "description": "Benchmark harness for local LLMs under Ollama. Measures what the model actually produced, including real tsc --strict compilation of generated code.",
-  "author": "Chemspec",
+  "author": "Ch4mspec",
   "license": "MIT",
   "type": "commonjs",
   "scripts": {

@@ -1,4 +1,4 @@
-# Chemspec — baseline results
+# Baseline results — AI-Models-Benchmark
 
 Reference measurements for reproducibility. Anyone can re-run the harness
 on comparable hardware and check whether these numbers hold.
