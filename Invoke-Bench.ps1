@@ -23,12 +23,19 @@
     Subset of test cases to run. Defaults to all.
 
 .PARAMETER Repeat
-    Runs per test case. The median is reported.
+    Runs per test case. The median is reported. Every repeat is written to
+    disk under out\raw with its index, so check-code.ps1 scores all of them
+    and not just one sample.
+
+.PARAMETER KeepRaw
+    Keep the previous contents of out\raw instead of clearing it. Useful to
+    compare two configurations side by side. Without it, stale responses from
+    an earlier run would be scored together with the new ones.
 
 .EXAMPLE
     .\Invoke-Bench.ps1
     .\Invoke-Bench.ps1 -Models qwen3:14b,devstral:24b -Repeat 3
-    .\Invoke-Bench.ps1 -Tests code-utility,reasoning-loadbalancer
+    .\Invoke-Bench.ps1 -Tests code-python,debug-chunk -KeepRaw
 #>
 
 [CmdletBinding()]
@@ -38,7 +45,8 @@ param(
     [int]$Repeat = 2,
     [int]$Context = 8192,
     [string]$OutDir = ".\out",
-    [switch]$SkipWarmup
+    [switch]$SkipWarmup,
+    [switch]$KeepRaw
 )
 
 Set-StrictMode -Version Latest
@@ -76,6 +84,45 @@ Start your reply with an import statement.
 Implement a TypeScript function `chunk<T>(items: T[], size: number): T[][]` that
 splits an array into chunks, plus `debounce` and `memoize` utilities.
 Return ONLY code inside a single code block. No prose before or after.
+"@
+    }
+    @{
+        Name       = "code-python"
+        Category   = "code"
+        NumPredict = 900
+        Think      = $false
+        Prompt     = @"
+Implement this function in Python:
+
+    def merge_intervals(intervals):
+        \"\"\"Merge overlapping OR touching intervals and return them sorted.\"\"\"
+
+intervals is a list of (start, end) integer tuples. Touching means
+[(1, 4), (4, 5)] merges into [(1, 5)]. Input may be unsorted. An empty
+list returns an empty list.
+
+Return ONLY code inside a single code block. No prose before or after.
+"@
+    }
+    @{
+        Name       = "debug-chunk"
+        Category   = "debug"
+        NumPredict = 900
+        Think      = $false
+        Prompt     = @"
+This Python function has bugs. Fix it.
+
+    def chunk(items, size):
+        return [items[i:i + size - 1] for i in range(0, len(items), size)]
+
+Requirements:
+- chunk([1,2,3,4,5], 2) must return [[1,2],[3,4],[5]]
+- chunk([], 3) must return []
+- chunk([1,2], 5) must return [[1,2]]
+- size <= 0 must raise ValueError
+
+Return ONLY the complete corrected function inside a single code block.
+No prose before or after.
 "@
     }
     @{
@@ -290,7 +337,11 @@ foreach ($m in $Models) {
                 $runs += Invoke-Measured -Model $m -Case $case -Context $Context `
                             -SupportsThink $(if ($meta) { $meta.ThinkSupport } else { $true })
                 $r = $runs[-1]
-                $rawRuns["$m/$($case.Name)"] = $r
+                # The repeat index is part of the key. Without it every run of
+                # the same case overwrote the previous one on disk, so
+                # check-code.ps1 only ever saw a single sample per case no
+                # matter how high -Repeat was set.
+                $rawRuns["$m/$($case.Name).run$i"] = $r
                 $flag = if ($r.EmptyOutput) { " [EMPTY]" }
                         elseif ($r.Truncated) { " [TRUNCATED]" }
                         else { "" }
@@ -302,7 +353,6 @@ foreach ($m in $Models) {
         }
 
         if ($runs.Count -gt 0) {
-            $first = $runs[0]
             $all += [PSCustomObject]@{
                 Model         = $m
                 Test          = $case.Name
@@ -311,12 +361,15 @@ foreach ($m in $Models) {
                 DecodeTps     = Get-Median ($runs | ForEach-Object { $_.DecodeTps })
                 PrefillTps    = Get-Median ($runs | ForEach-Object { $_.PrefillTps })
                 WallSec       = Get-Median ($runs | ForEach-Object { $_.WallSec })
-                OutTokens     = $first.OutTokens
-                ThinkChars    = $first.ThinkChars
-                ResponseChars = $first.ResponseChars
+                OutTokens     = Get-Median ($runs | ForEach-Object { $_.OutTokens })
+                ThinkChars    = Get-Median ($runs | ForEach-Object { $_.ThinkChars })
+                ResponseChars = Get-Median ($runs | ForEach-Object { $_.ResponseChars })
                 ProseRatio    = Get-Median ($runs | ForEach-Object { $_.ProseRatio })
-                Truncated     = $first.Truncated
-                EmptyOutput   = $first.EmptyOutput
+                # A failure on any repeat is a failure of the model, not of
+                # one unlucky sample. Reporting only run 1 would let a model
+                # score 2/2 on a case it produces correctly half the time.
+                Truncated     = [bool](@($runs | Where-Object { $_.Truncated }).Count)
+                EmptyOutput   = [bool](@($runs | Where-Object { $_.EmptyOutput }).Count)
                 Runs          = $runs.Count
             }
         }
@@ -328,6 +381,19 @@ foreach ($m in $Models) {
 # Indispensable : les chiffres ne suffisent pas a juger la qualite du code.
 $rawDir = Join-Path $OutDir "raw"
 New-Item -ItemType Directory -Force -Path $rawDir | Out-Null
+
+# Le dossier brut est vide auDepart de chaque execution. Sans cela, un fichier
+# d'une execution precedente reste sur disque et se retrouve note par
+# check-code.ps1 a cote des nouveaux : le tableau affiche alors un melange de
+# deux series de mesures, sans aucun moyen de les distinguer. -KeepRaw permet
+# de conserver l'historique quand on veut comparer deux configurations.
+if ($KeepRaw) {
+    Write-Host "Keeping existing raw output (-KeepRaw)." -ForegroundColor DarkGray
+} else {
+    Get-ChildItem -Path $rawDir -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item $_.FullName -Force }
+}
+
 foreach ($pair in $rawRuns.GetEnumerator()) {
     $slug = ($pair.Key -replace '[^A-Za-z0-9._-]', '_')
     $pair.Value.Output     | Out-File (Join-Path $rawDir "$slug.out.txt")  -Encoding utf8
