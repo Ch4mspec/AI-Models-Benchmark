@@ -2,7 +2,10 @@ out/
 *.log
 node_modules/
 package-lock.json
-tsc/
+
+# Python bytecode, if a verifier is ever run from the repo root
+__pycache__/
+*.pyc
 
 # Fichiers Windows parasites
 Thumbs.db

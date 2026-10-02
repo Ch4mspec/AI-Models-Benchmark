@@ -32,11 +32,16 @@ Reproduce the environment check with one command:
 nvidia-smi --query-gpu=driver_version,name,memory.total,utilization.gpu --format=csv
 ```
 
-GPU utilisation should read 0% before a run. On an idle machine, prefill
-throughput on the 14B reaches 3 000-4 500 tok/s; on a machine with a browser
-and a game client running, the same model measured 869-2 366 tok/s. A
-2× spread from background load alone, which is why "idle" is a recorded
-variable and not an assumption.
+Check GPU *utilisation*, not VRAM occupancy. The reference run started with
+9.0 GB of 15.9 GB free, a browser resident but not computing, and the 14B
+measured 3 063-6 585 tok/s prefill. An earlier session with a browser and a
+game client both computing measured 869-2 366 tok/s on the same model, close
+to a 2× penalty.
+
+So the rule is narrower than "close everything": free VRAM does not affect
+throughput much, but an active GPU workload does. Free VRAM decides something
+else and more fundamental — whether a model larger than the card can fit at
+all. Both are recorded.
 
 ---
 
@@ -71,13 +76,15 @@ The corrections, in order of importance:
 
 A test is a task with a pass condition that does not involve your opinion.
 
-The harness ships with four. Each isolates one property, so a failure
+The harness ships with six. Each isolates one property, so a failure
 points at a cause rather than at "the model".
 
 | Test | Property | Pass condition |
 |---|---|---|
 | `code-auth` | sustained instruction following | produces a fenced code block, compiles strict |
-| `code-utility` | code correctness | produces a fenced code block, compiles strict |
+| `code-utility` | code correctness | fenced block, compiles strict, `chunk` and `memoize` return the right values |
+| `code-python` | code correctness | fenced block, compiles, `merge_intervals` returns the right values |
+| `debug-chunk` | bug identification | fixed function returns the right values and rejects `size <= 0` |
 | `reasoning-loadbalancer` | multi-step reasoning | returns a non-empty answer |
 | `instruction-following` | format obedience | output is exactly `BANANA` |
 
@@ -85,6 +92,27 @@ points at a cause rather than at "the model".
 that cannot suppress its own reasoning, which is the failure most likely to
 wreck a real workflow and the one a human reviewer is least likely to notice
 because the output still *looks* like an answer.
+
+`debug-chunk` exists because the other cases ask for code the model is good
+at. Passing a request to write a utility is not the same skill as spotting
+the `size - 1` in someone else's working function. The prompt states the
+required behaviour exactly, so the test measures diagnosis and not guessing.
+
+### Pass conditions
+
+Four of the six cases are judged by **execution**, not by inspection. The
+expected behaviour is written out in the prompt as literal input/output pairs,
+and `check-code.ps1` appends those assertions to the model's own code and runs
+it.
+
+This matters because the two checks fail independently, and in both
+directions. `llama3.1:8b` wrote a `chunk` using `Array(n).fill()`, which
+violates the zero-argument rule for `fill` and fails `tsc --strict`, while
+returning correct results at runtime. A different model wrote a
+`merge_intervals` that compiled without a single diagnostic and silently
+dropped every interval after the first when the input was unsorted.
+
+Neither check subsumes the other, so the harness reports both.
 
 ### Writing your own
 
@@ -97,6 +125,10 @@ A good test has these properties:
   silent.
 - **Prose in the failure case is itself the result.** A model that narrates
   instead of producing has failed, and the transcript is the evidence.
+- **A pass condition that needs no opinion.** If you have to read the output
+  and decide whether it is right, write an assertion instead. The human
+  reading of "returns `409` where `400` was expected" is a real finding, but
+  it is a finding you cannot reproduce.
 
 ---
 
@@ -121,10 +153,31 @@ bias.
 
 | Status | Meaning |
 |---|---|
-| `PASS` | compiles under `tsc --strict` |
+| `PASS` | compiles under `tsc --strict`, or `py_compile` for Python |
 | `FAIL` | real type or syntax errors |
 | `PROSE` | no code block produced at all |
 | `N/A` | no code expected for this test |
+
+**Execution status** — a separate axis, reported alongside compilation:
+
+| Status | Meaning |
+|---|---|
+| `OK` | every assertion in `tests\<case>.verify.*` passed |
+| `FAIL` | at least one assertion failed |
+| `-` | no verifier exists for this case, code was only compiled |
+
+The two are independent by design. See section 6.
+
+**Repeat semantics** — with the default `seed: 0`, Ollama generation is
+deterministic and every repeat returns the identical response. Confirmed on
+`qwen3:14b`: both repeats of `code-utility` produced 848 characters with an
+identical prose ratio. So the default median measures clock and VRAM state, not
+generation variance.
+
+That is the right default when comparing throughput, where you want identical
+work timed several times. It is the wrong default when asking whether a code
+result is stable, because a deterministic pass says nothing about the other
+samples. `-RandomSeed` varies the seed per repeat for that question.
 
 **Prose is a compile failure**, not a syntax curiosity. Compiling a
 monologue produces hundreds of meaningless errors. Distinguishing them is the
@@ -151,12 +204,13 @@ Record before you measure, publish with the results.
 - Context window used
 - Number of repeats, and the aggregation (median, not mean)
 
-Free VRAM at launch is the field most often omitted and the one that explains
-most discrepancies. A run started with 1 GB free and a run started with 15 GB
-free are not the same experiment.
+Free VRAM at launch is the field most often omitted. A run started with 1 GB
+free and a run started with 15 GB free are not the same experiment, because
+one of them fits the model and the other does not.
 
-Run on an idle machine. Close the browser. On the reference machine, one
-browser tab was holding 4 GB of VRAM.
+Do not over-correct, though. VRAM occupancy is not throughput. Close what is
+*computing* — a game client, a video, a second inference server. A browser
+holding 4 GB of VRAM while idle cost nothing measurable in the reference run.
 
 ---
 
@@ -193,11 +247,14 @@ This is what separates a measurement from an opinion.
 
 ```powershell
 npm install
-.\check-code.ps1 -File .\out\raw\*.out.txt
+.\check-code.ps1
 ```
 
-`tsc --strict` with `--typeRoots` pointed at `node_modules/@types` and
-`--types node`. Two details that matter:
+Two independent gates, in this order.
+
+**1. Compilation.** `tsc --strict` with `--typeRoots` pointed at
+`node_modules/@types` and `--types node`. Python goes through `py_compile`.
+Three details that matter:
 
 - **`@types/node` is not optional.** Without it, every legitimate use of
   `process` or `require` raises TS2591 and valid code fails. That is an
@@ -205,13 +262,53 @@ npm install
 - **TS2307 (`Cannot find module`) is excluded.** The LLM's output imports
   packages that are not installed. Reporting those as errors fails everything
   and distinguishes nothing.
+- **`PROSE` is not a failure.** When no code fence is found and the language
+  was inferred from free text, compilation is meaningless — one is scoring
+  monologue. It is reported as its own status instead of being counted as
+  hundreds of syntax errors.
 
-What compilation proves: the output is syntactically valid and type-correct.
+**2. Execution.** When `tests\<case>.verify.{py,ts}` exists, its assertions
+are appended to the model's own code and the result is run. For TypeScript the
+combined file is compiled with emit, then run under `node`; for Python it is
+run directly.
 
-What it does **not** prove: that the logic is right. A handler that returns
-`400` where the spec says `409` compiles perfectly. Compilation is a
-necessary condition, not a sufficient one. Pair it with a human reading the
-raw output, and say so in your report.
+Two details that matter:
+
+- **Type errors in the assertions are not the model's fault.** `typeof chunk`
+  is legal JavaScript on an undeclared identifier and throws nothing, but
+  raises TS2304 in TypeScript. So the emit step ignores `tsc`'s exit code and
+  lets the run decide. Type errors in the *model's* code are already caught by
+  gate 1.
+- **An exit code of 0 is not enough.** The file must also print `VERIFY_OK`. A
+  model whose code calls `sys.exit()` before the assertions run would otherwise
+  be recorded as a pass.
+
+What the two gates together prove: the output parses, type-checks under strict
+rules where the language has them, and returns the specified values.
+
+What they still do **not** prove: anything about performance, security,
+resource handling, or whether the code is the right shape for the job. A
+handler that returns `400` where the spec says `409` still passes `code-auth`,
+because judging that would mean standing up Express, Prisma and a database. Say
+so in your report.
+
+---
+
+## 6b. Executing model output
+
+Running generated code is the only way to judge it, and it deserves an honest
+framing.
+
+The check executes whatever the model produced, on the machine running the
+harness. There is no sandbox. That is a real limitation and it belongs in the
+limitations section, not in a footnote.
+
+What makes it tolerable here: the verified cases are pure functions over lists
+and numbers, with no filesystem, network or subprocess access. The exposure is
+whatever a model wrote, not whatever the test intended.
+
+If you extend this to cases that touch I/O, put them in a container or a VM
+first. The mechanism does not change, the boundary does.
 
 ---
 
@@ -230,8 +327,8 @@ Minimum for a defensible claim:
 Point 4 is where most published benchmarks are weakest. A comparison that
 reports only wins is not a measurement.
 
-State the limitation nearest to the claim it limits. "qwen3:14b compiled 2/2
-on two hand-authored test cases" is honest. "qwen3:14b produces correct
+State the limitation nearest to the claim it limits. "qwen3:14b passed 6/6
+assertions on three hand-authored cases" is honest. "qwen3:14b produces correct
 code" is not supported by that evidence.
 
 ---
@@ -239,30 +336,45 @@ code" is not supported by that evidence.
 ## 8. Reference results
 
 Full data in [`BASELINE.md`](BASELINE.md). Machine: RTX 5070 Ti 16 GB,
-Ryzen 7 9800X3D, 31.7 GB RAM, Ollama 0.35.0.
+Ryzen 7 9800X3D, 31.7 GiB RAM, Ollama 0.35.0. Six cases, two repeats each,
+median reported.
 
-| Model | Compiles | Decode tok/s | Prose (utility) | One-word obedience |
-|---|---|---|---|---|
-| qwen3:14b | 2/2 | 80 | 0.07 | pass |
-| devstral:24b | 2/2 | 28 | 0.14 | pass |
-| qwen3:30b-a3b | **0/2** | 105 | 0.38 | **fail** |
+| Model | Compiled | `PROSE` | Behaviour | Decode tok/s | One-word obedience |
+|---|---|---|---|---|---|
+| `qwen3:14b` | 8/8 | 0 | 6/6 | 77–101 | pass |
+| `devstral:24b` | 8/8 | 0 | 6/6 | 29–38 | pass |
+| `llama3.1:8b` | 7/8 | 0 | 4/4 | 143–181 | pass |
+| `qwen3:30b-a3b` | 1/5 | 4 | 2/2 | 103–112 | **fail** |
 
-Three observations worth carrying to your own hardware:
+Four observations worth carrying to your own hardware:
 
-**The fastest model produced no code.** 105 tok/s, 18 GB, no fenced block on
-either code test. It answered a request for one word with 1307 characters of
-deliberation. Speed here measures verbosity.
+**Every response that could be executed was correct.** 20 of 20, across four
+models and three code cases. On cases where the expected behaviour is written
+out as literal input/output pairs, none of these models produced code that ran
+and then got the answer wrong.
 
-**Throughput inverted against capability.** The 30B is 31% faster than the
-14B and 3.7× faster than devstral, and the least useful of the three on
-these tests. If a comparison leads with tok/s it will lead with the wrong
-answer.
+**So the interesting failures are all about format, not capability.** The 30B
+is the fastest model in the set and the only one that failed to comply. Four
+of its five non-passing code responses contained no code fence at all; the
+prompt asked for one, in bold. The fifth contained genuine type errors. On the
+two responses where it did emit a fence, the code ran correctly.
 
-**Code quality and speed were independent.** devstral is 2.8× slower than the
-14B and produced the more semantically correct output: `409 Conflict` where
-the 14B returned `400`, `express-validator` instead of a hand-rolled regex,
-separate secrets for access and refresh tokens. A throughput-led ranking
-would rank it last.
+This is the distinction that matters and that throughput charts cannot show.
+The model knows what the code should be. It does not reliably deliver it in the
+shape you asked for. If your pipeline parses fences, that gap is a failure; if
+it scrapes whatever comes back, it is invisible.
+
+**Reasoning models spent the budget and returned nothing.** With a
+4000-token budget and `think=true`, both Qwen3 models came back with an empty
+response — 15 000 to 16 000 characters of reflection and no answer. The two
+models without a thinking mode answered every time. A harness that does not
+check for empty output will report a working model.
+
+**Compilation and execution caught different things.** Both `FAIL`s on
+compilation were real type errors that runtime behaviour did not expose. The
+reverse — clean compile, wrong answer — was produced by hand while building
+the verifier and has not come from a model on these cases yet. Report both
+columns; neither subsumes the other.
 
 ---
 
@@ -271,17 +383,31 @@ would rank it last.
 Stated plainly, because a method document that hides its weaknesses is an
 advertisement.
 
-- **Four hand-authored cases.** A model can pass all four and fail real work.
+- **Six hand-authored cases.** A model can pass all six and fail real work.
   Extend the set before drawing a general conclusion.
 - **`Repeat = 2` default.** Enough to catch a gross error, not enough to
   resolve a 10% difference. Use 3–5.
-- **Compilation is necessary, not sufficient.** A type-correct endpoint with
-  the wrong status code passes.
+- **Assertions cover only what the prompt states.** They test the behaviour
+  named in the spec and nothing else: no performance, no security, no
+  resource leaks, no style. A correct `merge_intervals` that is O(n²) passes.
+- **Execution has no sandbox.** Model output runs on your machine. Safe for
+  pure functions, not for anything else. See section 6b.
+- **`code-auth` is only compiled, never run.** Judging it means standing up
+  Express, Prisma and a database. Its semantic quality is a human judgement
+  and is labelled as one.
 - **Prose ratio is a heuristic.** It counts lines, not meaning. It is
   consistent across models, which is what matters, but it is not a quality
   measure.
-- **No test execution.** Generated code is compiled, never run against a
-  spec. This is the largest gap.
+- **Four models, two of them from the same family.** Enough to show the
+  harness is not Qwen-specific, not enough to claim it is unbiased.
+- **The verifier and the prompts share an author.** The same person wrote the
+  specification and the assertions, which is exactly the situation where a
+  spec can be read charitably by its author and strictly by a competitor. The
+  mitigations are that the expected behaviour is stated literally in the
+  prompt, and that the assertions are readable in `tests/`.
+- **Execution correctness has never once been the failing gate.** 20/20
+  passed, so this axis has not yet discriminated between models. Treat the
+  `Behaviour` column as unproven infrastructure rather than as a result.
 - **Single machine, single session.** The reference numbers do not transfer.
   A 24 GB card changes the ranking, because the 30B stops overflowing.
 

@@ -32,10 +32,18 @@
     compare two configurations side by side. Without it, stale responses from
     an earlier run would be scored together with the new ones.
 
+.PARAMETER RandomSeed
+    Send a different seed on each repeat. Ollama defaults to seed 0, which
+    makes generation deterministic: without this, every repeat returns the
+    identical response and -Repeat only measures clock and VRAM noise. Turn
+    it on when you want to know whether a result is stable across samples
+    rather than reproducible for a single one.
+
 .EXAMPLE
     .\Invoke-Bench.ps1
     .\Invoke-Bench.ps1 -Models qwen3:14b,devstral:24b -Repeat 3
     .\Invoke-Bench.ps1 -Tests code-python,debug-chunk -KeepRaw
+    .\Invoke-Bench.ps1 -Repeat 5 -RandomSeed
 #>
 
 [CmdletBinding()]
@@ -46,7 +54,8 @@ param(
     [int]$Context = 8192,
     [string]$OutDir = ".\out",
     [switch]$SkipWarmup,
-    [switch]$KeepRaw
+    [switch]$KeepRaw,
+    [switch]$RandomSeed
 )
 
 Set-StrictMode -Version Latest
@@ -223,7 +232,8 @@ function Invoke-Measured {
         [string]$Model,
         [hashtable]$Case,
         [int]$Context,
-        [bool]$SupportsThink = $true
+        [bool]$SupportsThink = $true,
+        [int]$Seed = 0
     )
 
     $body = @{
@@ -234,6 +244,7 @@ function Invoke-Measured {
             num_predict = $Case.NumPredict
             num_ctx     = $Context
             temperature = 0.2
+            seed        = $Seed
         }
     }
     # Always send think explicitly when the model supports it. Omitting it
@@ -334,8 +345,14 @@ foreach ($m in $Models) {
         $runs = @()
         for ($i = 1; $i -le $Repeat; $i++) {
             try {
+                # Ollama uses seed 0 by default, which makes generation
+                # deterministic: with -Repeat 2 and no seed, both runs return
+                # the identical response and -Repeat only measures clock and
+                # VRAM noise, not generation variance. -RandomSeed varies it.
+                $seed = if ($RandomSeed) { Get-Random -Minimum 1 -Maximum 2147483647 } else { 0 }
                 $runs += Invoke-Measured -Model $m -Case $case -Context $Context `
-                            -SupportsThink $(if ($meta) { $meta.ThinkSupport } else { $true })
+                            -SupportsThink $(if ($meta) { $meta.ThinkSupport } else { $true }) `
+                            -Seed $seed
                 $r = $runs[-1]
                 # The repeat index is part of the key. Without it every run of
                 # the same case overwrote the previous one on disk, so
