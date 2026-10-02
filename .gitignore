@@ -1,0 +1,10 @@
+out/
+*.log
+node_modules/
+package-lock.json
+tsc/
+
+# Fichiers Windows parasites
+Thumbs.db
+desktop.ini
+.DS_Store

@@ -1,0 +1,27 @@
+{
+  "name": "ai-models-benchmark",
+  "version": "1.0.0",
+  "description": "Benchmark harness for local LLMs under Ollama. Measures what the model actually produced, including real tsc --strict compilation of generated code.",
+  "author": "Chemspec",
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "bench": "powershell -ExecutionPolicy Bypass -File ./Invoke-Bench.ps1",
+    "check": "powershell -ExecutionPolicy Bypass -File ./check-code.ps1 -File ./out/raw/*.out.txt"
+  },
+  "keywords": [
+    "llm",
+    "benchmark",
+    "ollama",
+    "local-llm",
+    "typescript",
+    "vram",
+    "quantization"
+  ],
+  "dependencies": {
+    "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4"
+  }
+}
