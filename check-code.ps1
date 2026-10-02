@@ -22,7 +22,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory, Position = 0)]
+    [Parameter(Position = 0)]
     [string]$File,
     [string]$TscPath = "node_modules\typescript\bin\tsc"
 )
@@ -130,6 +130,17 @@ function Test-Compile {
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
+# Sans argument, on regarde par defaut dans le dossier de sortie du harnais.
+# Avant, PowerShell affichait une invite interactive et un oubli produisait
+# un chemin incomprehensible du genre "check-code.ps1 .\out\raw".
+if (-not $File) {
+    $File = Join-Path $PSScriptRoot "out\raw\*.out.txt"
+    if (-not (Test-Path $File)) {
+        throw "No argument given and no output found. Run Invoke-Bench.ps1 first, or pass a path: .\check-code.ps1 .\out\raw\*.out.txt"
+    }
+    Write-Host "Scanning $File (default)" -ForegroundColor DarkGray
+}
+
 $files = @(Get-ChildItem -Path $File -File)
 if ($files.Count -eq 0) { throw "No files found: $File" }
 
