@@ -105,6 +105,20 @@ accepts only `think=true`; sending `think=false` puts it in an unintended
 state and produces rambling. The harness reads `/api/show` and omits the
 parameter when unsupported.
 
+## Reference machine
+
+| Component | Value |
+|---|---|
+| OS | Windows 11 Home, build 26300 |
+| GPU | NVIDIA GeForce RTX 5070 Ti, 16303 MiB |
+| Driver | 617.14 |
+| CPU | AMD Ryzen 7 9800X3D, 8 cores / 16 threads |
+| RAM | 31.7 GiB |
+| Ollama | 0.35.0 |
+
+The harness prints free VRAM on launch. Throughput is only comparable when
+that figure is high, which is why every run records it.
+
 ## Reading the results
 
 **Decode tok/s** — generation speed. A good feel for responsiveness, but

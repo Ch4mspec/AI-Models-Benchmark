@@ -3,8 +3,26 @@
 Reference measurements for reproducibility. Anyone can re-run the harness
 on comparable hardware and check whether these numbers hold.
 
-**Machine**: NVIDIA GeForce RTX 5070 Ti (16 GB VRAM) · AMD Ryzen 7 9800X3D · 31.7 GB RAM
-**Ollama**: 0.35.0
+## Environment
+
+Full detail, so a reader can reproduce or contest these numbers.
+
+| Component | Value |
+|---|---|
+| OS | Windows 11 Home, build 26300 |
+| GPU | NVIDIA GeForce RTX 5070 Ti, 16303 MiB |
+| Driver | 617.14 |
+| CPU | AMD Ryzen 7 9800X3D, 8 cores / 16 threads |
+| RAM | 34 026 749 952 bytes (31.7 GiB) |
+| Ollama | 0.35.0 |
+| Quantization | Q4_K_M (all models) |
+| State at measurement | idle, GPU at 0% |
+
+`nvidia-smi --query-gpu=driver_version,name,memory.total,utilization.gpu --format=csv`
+returns the first three rows above. The last is a run-time check: the harness
+prints free VRAM on every launch, and throughput is only comparable when that
+figure is high.
+
 **Date**: 2026-10-01
 **Context**: 8192 · **Repeats**: 1 (directional, not statistical)
 

@@ -12,6 +12,34 @@ specific hardware.
 
 ---
 
+## 0. Reference environment
+
+Every number in section 8 comes from this machine, measured idle.
+
+| Component | Value |
+|---|---|
+| OS | Windows 11 Home, build 26300 |
+| GPU | NVIDIA GeForce RTX 5070 Ti, 16303 MiB |
+| Driver | 617.14 |
+| CPU | AMD Ryzen 7 9800X3D, 8 cores / 16 threads |
+| RAM | 31.7 GiB |
+| Ollama | 0.35.0 |
+| Quantization | Q4_K_M, all three models |
+
+Reproduce the environment check with one command:
+
+```powershell
+nvidia-smi --query-gpu=driver_version,name,memory.total,utilization.gpu --format=csv
+```
+
+GPU utilisation should read 0% before a run. On an idle machine, prefill
+throughput on the 14B reaches 3 000-4 500 tok/s; on a machine with a browser
+and a game client running, the same model measured 869-2 366 tok/s. A
+2× spread from background load alone, which is why "idle" is a recorded
+variable and not an assumption.
+
+---
+
 ## 1. Why published comparisons mislead
 
 A benchmark that cannot be reproduced is an opinion with a table.
