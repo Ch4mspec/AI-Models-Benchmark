@@ -93,8 +93,8 @@ bias.
 
 | Status | Meaning |
 |---|---|
-| `OUI` | compiles under `tsc --strict` |
-| `NON` | real type or syntax errors |
+| `PASS` | compiles under `tsc --strict` |
+| `FAIL` | real type or syntax errors |
 | `PROSE` | no code block produced at all |
 | `N/A` | no code expected for this test |
 

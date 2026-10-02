@@ -67,10 +67,10 @@ Share of non-code lines in the response.
 
 **Shared token budget.** `num_predict` covers thinking and response alike.
 qwen3:14b on `reasoning-loadbalancer` with 4000 predicted tokens returned
-0 characters of answer: the entire budget went to reflection. Marked `VIDE`.
+0 characters of answer: the entire budget went to reflection. Marked `EMPTY`.
 
 **Truncated output.** `done_reason = length` means the response was cut.
-The 30B hit the cap on both code tasks (`COUPE`). Speed numbers from a
+The 30B hit the cap on both code tasks (`TRUNCATED`). Speed numbers from a
 truncated run are valid; the code is incomplete.
 
 **Unsupported mode forced.** `qwen3:30b-a3b` reports `thinking.values = [true]`

@@ -69,8 +69,8 @@ Three possible outcomes:
 
 | Status | Meaning |
 |---|---|
-| `OUI` | compiles in strict mode |
-| `NON` | real type or syntax errors |
+| `PASS` | compiles in strict mode |
+| `FAIL` | real type or syntax errors |
 | `PROSE` | produced no code block at all, response entirely discursive |
 
 `PROSE` is the most informative status: it flags a model that talks instead
@@ -95,10 +95,10 @@ produced, which no automatic score replaces.
 
 **1. The token budget is shared.** `num_predict` covers thinking *and*
 response. In think mode, a 1200-token budget can be consumed entirely by
-reflection and return zero characters. Marked `VIDE`.
+reflection and return zero characters. Marked `EMPTY`.
 
 **2. `done_reason = length` means truncated**, not finished. Measuring a cut
-response gives you a throughput number and no usable code. Marked `COUPE`.
+response gives you a throughput number and no usable code. Marked `TRUNCATED`.
 
 **3. Forcing an unsupported mode degrades the model.** `qwen3:30b-a3b`
 accepts only `think=true`; sending `think=false` puts it in an unintended

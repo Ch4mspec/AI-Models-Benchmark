@@ -1,19 +1,19 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Verificateur de compilation TypeScript pour sorties de LLM.
+    TypeScript compilation checker for LLM output.
 
 .DESCRIPTION
-    Un taux de debit et un ratio de prose ne disent rien de la correction
-    du code. Ce script extrait les blocs de code d'une reponse de LLM et
-    les compile reellement avec tsc, en mode strict.
+    A throughput figure and a prose ratio say nothing about correctness.
+    This script extracts code blocks from an LLM response and compiles them
+    for real with tsc, in strict mode.
 
-    C'est la seule mesure qui tranche : un modele qui bavarde peut produire
-    du code valide, un modele rapide peut produire du code qui ne compile pas.
+    This is the measure that settles it: a model that rambles may produce
+    valid code, a fast model may produce code that does not compile.
 
-    Detection automatique du langage pour ne compiler que ce qui est
-    pertinent : TypeScript/JavaScript sont verifies, Python/Go/Rust sont
-    simplement comptes comme "produits".
+    Automatic language detection so only what is worth compiling gets
+    compiled: TypeScript/JavaScript are verified, other languages are
+    simply counted as "produced".
 
 .EXAMPLE
     .\check-code.ps1 -File .\out\raw\qwen3_14b_code-utility.out.txt
@@ -79,7 +79,7 @@ function Test-Compile {
         return [PSCustomObject]@{
             Ok        = $null
             Errors    = 0
-            Notes     = "typescript absent : lancer npm install dans le dossier du projet"
+            Notes     = "typescript absent: run npm install in the project folder"
             Diagnostics = @()
         }
     }
@@ -122,7 +122,7 @@ function Test-Compile {
     return [PSCustomObject]@{
         Ok         = ($code -eq 0 -or $real.Count -eq 0)
         Errors     = $real.Count
-        Notes      = if ($code -eq 0) { "compile" } else { "erreurs hors dependances : $($real.Count)" }
+        Notes      = if ($code -eq 0) { "compiles" } else { "errors excluding dependencies: $($real.Count)" }
         Diagnostics = $real | Select-Object -First 8
     }
 }
@@ -131,7 +131,7 @@ function Test-Compile {
 # Execution
 # ---------------------------------------------------------------------------
 $files = @(Get-ChildItem -Path $File -File)
-if ($files.Count -eq 0) { throw "Aucun fichier : $File" }
+if ($files.Count -eq 0) { throw "No files found: $File" }
 
 $workRoot = Join-Path $PSScriptRoot "out\tsc"
 New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
@@ -154,7 +154,7 @@ foreach ($f in $files) {
     $result = if ($noFence) {
         [PSCustomObject]@{
             Ok = $false; Errors = 0
-            Notes = "AUCUN BLOC DE CODE : reponse entierement en prose"
+            Notes = "NO CODE BLOCK: response entirely prose"
             Diagnostics = @()
         }
     } elseif ($tsSource) {
@@ -162,19 +162,19 @@ foreach ($f in $files) {
     } else {
         [PSCustomObject]@{
             Ok = $null; Errors = 0
-            Notes = "pas de bloc TS/JS detecte"
+            Notes = "no TS/JS block detected"
             Diagnostics = @()
         }
     }
 
     $rows += [PSCustomObject]@{
-        Fichier  = $f.Name
+        File     = $f.Name
         Langs    = if ($langs) { $langs } else { "-" }
-        Blocs    = $blocks.Count
-        Lignes   = if ($tsSource) { ($tsSource -split "`n").Count } else { 0 }
+        Blocks   = $blocks.Count
+        Lines    = if ($tsSource) { ($tsSource -split "`n").Count } else { 0 }
         Compile  = if ($noFence) { "PROSE" }
-                   else { switch ($result.Ok) { $true { "OUI" } $false { "NON" } $null { "N/A" } } }
-        Erreurs  = $result.Errors
+                   else { switch ($result.Ok) { $true { "PASS" } $false { "FAIL" } $null { "N/A" } } }
+        Errors   = $result.Errors
         Note     = $result.Notes
     }
 
@@ -187,13 +187,14 @@ foreach ($f in $files) {
     }
 }
 
-$rows | Format-Table -AutoSize
+Write-Host ""
+$rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 
 $tsChecked = @($rows | Where-Object { $_.Compile -ne "N/A" })
 if ($tsChecked.Count -gt 0) {
-    $ok = @($tsChecked | Where-Object { $_.Compile -eq "OUI" }).Count
+    $ok = @($tsChecked | Where-Object { $_.Compile -eq "PASS" }).Count
     Write-Host ""
-    Write-Host "Compilation : $ok / $($tsChecked.Count) fichiers TS/JS valides" -ForegroundColor Cyan
+    Write-Host "Compilation: $ok / $($tsChecked.Count) TS/JS files valid" -ForegroundColor Cyan
 }
 
 $rows | Export-Csv -NoTypeInformation `

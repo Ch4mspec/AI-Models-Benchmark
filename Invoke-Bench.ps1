@@ -1,34 +1,34 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Harnais de benchmark reproductible pour LLM locaux (Ollama).
+    Reproducible benchmark harness for local LLMs (Ollama).
 
 .DESCRIPTION
-    Mesure la vitesse, la obéissance aux consignes et le coût en tokens d'un
-    lot de modèles sur une machine donnée, puis produit un rapport Markdown
-    et des données JSON/CSV exploitables.
+    Measures throughput, instruction obedience and token cost across a set of
+    models on a given machine, then produces a Markdown report plus
+    JSON/CSV data.
 
-    Points d'attention (issus de mesures réelles) :
-      - Le budget num_predict est PARTAGE entre la reflexion (thinking) et la
-        reponse. Un budget trop faible peut返回一个 une reponse vide.
-      - done_reason = "length" signifie sortie TRONQUEE, pas terminee.
-      - Certains modeles n'acceptent que think=true ; forcer think=false les
-        place dans un etat non supporte (comportement degrade).
-      - Un modele plus gros que la VRAM overflowe vers la RAM systeme.
+    Caveats drawn from real measurements:
+      - The num_predict budget is SHARED between reflection (thinking) and
+        response. A budget set too low can return an empty response.
+      - done_reason = "length" means TRUNCATED output, not finished.
+      - Some models accept think=true only; forcing think=false puts them
+        in an unsupported state and degrades output.
+      - A model larger than available VRAM overflows into system RAM.
 
 .PARAMETER Models
-    Modeles a tester. Par defaut : tous les modeles Ollama installes.
+    Models to test. Defaults to all installed Ollama models.
 
 .PARAMETER Tests
-    Sous-ensemble de tests a executer (noms de cas). Par defaut : tous.
+    Subset of test cases to run. Defaults to all.
 
 .PARAMETER Repeat
-    Nombre d'executions par cas. La mediane est reportee.
+    Runs per test case. The median is reported.
 
 .EXAMPLE
     .\Invoke-Bench.ps1
     .\Invoke-Bench.ps1 -Models qwen3:14b,devstral:24b -Repeat 3
-    .\Invoke-Bench.ps1 -Tests code,reasoning
+    .\Invoke-Bench.ps1 -Tests code-utility,reasoning-loadbalancer
 #>
 
 [CmdletBinding()]
@@ -45,8 +45,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ---------------------------------------------------------------------------
-# Cas de test. Chaque cas est independant : c'est ce qui rend le rapport
-# interpretable. On ne melange jamais deux mesures dans un meme run.
+# Test cases. Each case is independent: that is what makes a report
+# interpretable. Two measurements are never mixed into one run.
 # ---------------------------------------------------------------------------
 $TestCases = @(
     @{
@@ -189,11 +189,11 @@ function Invoke-Measured {
             temperature = 0.2
         }
     }
-    # On envoie TOUJOURS think explicitement quand le modele le supporte.
-    # Ne pas l'envoyer laisse le defaut du modele s'appliquer (Qwen3 = true),
-    # ce qui fait partir le budget num_predict entierement en reflexion et
-    # renvoie une reponse vide. Cf. qwen3:30b-a3b qui n'accepte que true :
-    # dans ce cas on ne force rien, l'etat par defaut est le seul valide.
+    # Always send think explicitly when the model supports it. Omitting it
+    # leaves the model default in effect (Qwen3 defaults to true), which sends
+    # the whole num_predict budget into reflection and returns an empty
+    # response. Cf. qwen3:30b-a3b, which accepts only true: there we send
+    # nothing, because the default is the only valid state.
     $body["think"] = if ($SupportsThink) { [bool]$Case.Think } else { $null }
     if ($null -eq $body["think"]) { $body.Remove("think") }
 
@@ -254,16 +254,16 @@ if ($Tests) {
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $gpu = Get-GpuProfile
-Write-Host "`n=== ENVIRONNEMENT ===" -ForegroundColor Cyan
+Write-Host "`n=== ENVIRONMENT ===" -ForegroundColor Cyan
 Write-Host "GPU    : $($gpu.GpuName)"
-Write-Host "VRAM   : $($gpu.VramFreeGB) Go libre / $($gpu.VramTotalGB) Go"
-Write-Host "Modeles: $($Models -join ', ')"
-Write-Host "Repeats: $Repeat   Contexte: $Context`n"
+Write-Host "VRAM   : $($gpu.VramFreeGB) GB free / $($gpu.VramTotalGB) GB total"
+Write-Host "Models : $($Models -join ', ')"
+Write-Host "Repeats: $Repeat   Context: $Context`n"
 
 $metas = @{}
 foreach ($m in $Models) {
     try { $metas[$m] = Get-ModelMeta -Name $m }
-    catch { Write-Warning "Metadonnees illisibles pour $m : $_" }
+    catch { Write-Warning "Unreadable metadata for $m : $_" }
 }
 
 $all = @()
@@ -274,7 +274,7 @@ foreach ($m in $Models) {
         $fit = if ($meta.Params -and $gpu.VramTotalGB -gt 0) {
             "OK" } else { "?" }
         Write-Host "--- $m --- [$fit]" -ForegroundColor Yellow
-        Write-Host "    thinking=$($meta.ThinkSupport) defaut=$($meta.ThinkDefault) ctx=$($meta.MaxContext) q=$($meta.Quant)"
+        Write-Host "    thinking=$($meta.ThinkSupport) default=$($meta.ThinkDefault) ctx=$($meta.MaxContext) q=$($meta.Quant)"
     }
 
     foreach ($case in $TestCases) {
@@ -291,8 +291,8 @@ foreach ($m in $Models) {
                             -SupportsThink $(if ($meta) { $meta.ThinkSupport } else { $true })
                 $r = $runs[-1]
                 $rawRuns["$m/$($case.Name)"] = $r
-                $flag = if ($r.EmptyOutput) { " [VIDE]" }
-                        elseif ($r.Truncated) { " [COUPE]" }
+                $flag = if ($r.EmptyOutput) { " [EMPTY]" }
+                        elseif ($r.Truncated) { " [TRUNCATED]" }
                         else { "" }
                 Write-Host ("    {0} #{1}: {2} tok/s  {3}s  out={4}car  prose={5}{6}" -f `
                     $case.Name, $i, $r.DecodeTps, $r.WallSec, $r.ResponseChars, $r.ProseRatio, $flag)
@@ -342,18 +342,18 @@ $all | ConvertTo-Json -Depth 5 |
     Out-File (Join-Path $OutDir "results-latest.json") -Encoding utf8
 
 # ---------------------------------------------------------------------------
-# Rapport
+# Report
 # ---------------------------------------------------------------------------
 $report = @()
-$report += "# Rapport de benchmark"
+$report += "# Benchmark report"
 $report += ""
-$report += "- Date : $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
-$report += "- Machine : $($gpu.GpuName), $($gpu.VramTotalGB) Go VRAM"
-$report += "- Contexte : $Context tokens   |   Repetitions : $Repeat (medianne reportee)"
+$report += "- Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+$report += "- Machine: $($gpu.GpuName), $($gpu.VramTotalGB) GB VRAM"
+$report += "- Context: $Context tokens   |   Repeats: $Repeat (median reported)"
 $report += ""
-$report += "## Capacites"
+$report += "## Capabilities"
 $report += ""
-$report += "| Modele | Params | Quant | Thinking | Defaut | Contexte max |"
+$report += "| Model | Params | Quant | Thinking | Default | Max context |"
 $report += "|---|---|---|---|---|---|"
 foreach ($m in $Models) {
     if (-not $metas[$m]) { continue }
@@ -361,27 +361,27 @@ foreach ($m in $Models) {
     $report += "| ``$($m)`` | $($x.Params) | $($x.Quant) | $($x.ThinkSupport) | $($x.ThinkDefault) | $($x.MaxContext) |"
 }
 $report += ""
-$report += "## Mesures"
+$report += "## Measurements"
 $report += ""
-$report += "| Modele | Test | Decode tok/s | Prefill tok/s | Temps | Tokens sortie | Reflexion (car) | Reponse (car) | Prose | Etat |"
+$report += "| Model | Test | Decode tok/s | Prefill tok/s | Wall | Out tokens | Think chars | Response chars | Prose | State |"
 $report += "|---|---|---|---|---|---|---|---|---|---|"
 foreach ($r in $all) {
-    $state = if ($r.EmptyOutput) { "**VIDE**" }
-             elseif ($r.Truncated) { "**COUPE**" }
+    $state = if ($r.EmptyOutput) { "**EMPTY**" }
+             elseif ($r.Truncated) { "**TRUNCATED**" }
              else { "ok" }
     $report += "| ``$($r.Model)`` | $($r.Test) | $($r.DecodeTps) | $($r.PrefillTps) | $($r.WallSec)s | $($r.OutTokens) | $($r.ThinkChars) | $($r.ResponseChars) | $($r.ProseRatio) | $state |"
 }
 $report += ""
-$report += "## Lecture"
+$report += "## Reading"
 $report += ""
-$report += "- **VIDE** : le budget `num_predict` a ete entierement consomme par la reflexion, ou le modele a refuse de produire. Augmenter le budget."
-$report += "- **COUPE** : `done_reason = length`. La reponse est incomplete, la mesure n'est pas exploitable telle quelle."
-$report += "- **Prose** : part de texte non-code dans la reponse. Plus c'est haut, plus le modele bavarde avant de produire."
+$report += "- **EMPTY** : the num_predict budget was consumed entirely by reflection, or the model refused to produce. Increase the budget."
+$report += "- **TRUNCATED** : `done_reason = length`. The response is incomplete, so the measurement is not usable as-is."
+$report += "- **Prose** : share of non-code lines in the response. Higher means the model narrates before producing."
 
 $report | Out-File (Join-Path $OutDir "report-$stamp.md") -Encoding utf8
 Copy-Item (Join-Path $OutDir "report-$stamp.md") (Join-Path $OutDir "report-latest.md") -Force
 
-Write-Host "=== RESULTATS ===" -ForegroundColor Green
+Write-Host "=== RESULTS ===" -ForegroundColor Green
 $all | Select-Object Model, Test, DecodeTps, PrefillTps, WallSec, ProseRatio, Truncated, EmptyOutput |
-    Format-Table -AutoSize
-Write-Host "Rapport : $(Join-Path $OutDir 'report-latest.md')" -ForegroundColor Green
+    Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+Write-Host "Report: $(Join-Path $OutDir 'report-latest.md')" -ForegroundColor Green
